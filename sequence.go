@@ -25,6 +25,7 @@ type Sequence struct {
 	EventualPoll    time.Duration
 	EventualTimeout time.Duration
 	last            func() *Sequence
+	onErr           func(*Sequence)
 }
 
 // Error describes an error that occured during the sequence processing.
@@ -119,9 +120,18 @@ func Start(driver selenium.WebDriver) *Sequence {
 // End ends a sequence and returns any errors
 func (s *Sequence) End() error {
 	if s.err != nil {
+		s.onErr(s)
 		return s.err
 	}
 	return nil
+}
+
+// OnError registers a function to call when an error occurs in the sequence.
+// Handy for calling things like .Debug() and .Screenshot("err.png") in error scenarios to output to
+// a CI server
+func (s *Sequence) OnError(fn func(s *Sequence)) *Sequence {
+	s.onErr = fn
+	return s
 }
 
 // Driver returns the underlying WebDriver
@@ -146,7 +156,6 @@ func (s *Sequence) Eventually() *Sequence {
 	}, s.EventualTimeout, s.EventualPoll)
 	if err != nil {
 		s.err.Caller = caller(0)
-		s.err.Err = errors.Wrap(s.err, "Eventually timed out")
 	}
 	return s
 }
@@ -168,7 +177,6 @@ func (e *Elements) Eventually() *Elements {
 	}, e.seq.EventualTimeout, e.seq.EventualPoll)
 	if err != nil {
 		e.seq.err.Caller = caller(0)
-		e.seq.err.Err = errors.Wrap(e.seq.err, "Eventually timed out")
 	}
 	return e
 }
