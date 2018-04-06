@@ -25,7 +25,7 @@ type Sequence struct {
 	EventualPoll    time.Duration
 	EventualTimeout time.Duration
 	last            func() *Sequence
-	onErr           func(*Sequence)
+	onErr           func(Error, *Sequence)
 }
 
 // Error describes an error that occured during the sequence processing.
@@ -121,7 +121,7 @@ func Start(driver selenium.WebDriver) *Sequence {
 func (s *Sequence) End() error {
 	if s.err != nil {
 		if s.onErr != nil {
-			s.onErr(s)
+			s.onErr(*s.err, s)
 		}
 		return s.err
 	}
@@ -131,7 +131,8 @@ func (s *Sequence) End() error {
 // OnError registers a function to call when an error occurs in the sequence.
 // Handy for calling things like .Debug() and .Screenshot("err.png") in error scenarios to output to
 // a CI server
-func (s *Sequence) OnError(fn func(s *Sequence)) *Sequence {
+// OnError must be called before any errors in order for it to be triggered properly
+func (s *Sequence) OnError(fn func(err Error, s *Sequence)) *Sequence {
 	s.onErr = fn
 	return s
 }
@@ -171,6 +172,16 @@ func (e *Elements) Eventually() *Elements {
 
 	err := e.seq.driver.WaitWithTimeoutAndInterval(func(d selenium.WebDriver) (bool, error) {
 		e.seq.err = nil
+		var err error
+		e.elems, err = e.selectFunc(e.selector)
+		if err != nil {
+			e.seq.err = &Error{
+				Stage:  "Elements",
+				Err:    err,
+				Caller: caller(1),
+			}
+			return false, nil
+		}
 		e = e.last()
 		if e.seq.err != nil {
 			return false, nil
@@ -491,21 +502,26 @@ func (s *Sequence) Find(selector string) *Elements {
 			return s.driver.FindElements(selenium.ByCSSSelector, selector)
 		},
 	}
+
 	if s.err != nil {
 		return e
 	}
-	var err error
-	e.elems, err = e.selectFunc(selector)
 
-	if err != nil {
-		s.err = &Error{
-			Stage:  "Elements",
-			Err:    err,
-			Caller: caller(1),
+	e.last = func() *Elements {
+		var err error
+		e.elems, err = e.selectFunc(selector)
+
+		if err != nil {
+			s.err = &Error{
+				Stage:  "Elements",
+				Err:    err,
+				Caller: caller(1),
+			}
+			return e
 		}
 		return e
 	}
-	return e
+	return e.last()
 }
 
 // Wait will wait for the given duration before continuing in the sequence
